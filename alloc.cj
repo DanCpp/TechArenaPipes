@@ -1,138 +1,212 @@
-import std.collection.LinkedList;
-import std.collection.LinkedListNode;
-import std.collection.HashMap;
+import std.collection.ArrayList;
 
-let ARENA_SIZE = 20;
+public class Arena {
+  public var offset: Int;
+  public var size: Int;
+  public var is_free: Bool;
 
-struct PipesAllocator {
+  public var left: Option<Arena> = None;
+  public var right: Option<Arena> = None;
 
-  var free_list: LinkedList<(Int, Int)>;
-  var allocated: HashMap<Int, Int>; 
-  var given_arenas: Int;
+  public var prev_free: Option<Arena> = None;
+  public var next_free: Option<Arena> = None;
 
+  public init(offset: Int, size: Int, is_free: Bool) {
+    this.offset = offset;
+    this.size = size;
+    this.is_free = is_free;
+  }
+
+  public prop end: Int {
+    get() {
+      return offset + size - 1;
+    }
+  }
+}
+
+public class PipesAllocator {
+  var free_heads: ArrayList<Option<Arena>>;
+  var large_head: Option<Arena> = None;
+
+  var first_arena: Option<Arena> = None;
+  var last_arena: Option<Arena> = None;
 
   public init() {
-    free_list = LinkedList<(Int, Int)>();
-    allocated = HashMap<Int, Int>();
-    free_list.addLast((0, 0));
-    given_arenas = 0;
+    free_heads = ArrayList<Option<Arena>>(41);
+    var i = 0;
+    while (i < 41) {
+      free_heads.add(None);
+      i += 1;
+    }
   }
 
-  mut func allocate(length: Int): (Int, Int) {
-    if (free_list.isEmpty()) {
-      let new_arenas = expand_free_list(length);
-      return (allocate_in_node(free_list.lastNode.getOrThrow(), length), new_arenas);
-    }
+  private func add_to_free(arena: Arena): Unit {
+    arena.is_free = true;
+    arena.prev_free = None;
 
-    var node = free_list.firstNode.getOrThrow();
-    while (true) {
-      match (node.value) {
-        case (offset, free_size) where free_size >= length =>
-          return (allocate_in_node(node, length), 0);
-        case _ => ();
+    if (arena.size <= 40) {
+      let head = free_heads[arena.size];
+      arena.next_free = head;
+      if (let Some(h) <- head) {
+        h.prev_free = Some(arena);
       }
-
-      match (node.next) {
-        case None => break; 
-        case Some(next_node) => node = node.next.getOrThrow();
-      }
-    }
-
-    let new_arenas = expand_free_list(length);
-    return (allocate_in_node(free_list.lastNode.getOrThrow(), length), new_arenas);
-  }
-
-  private mut func expand_free_list(length: Int): Int {
-    let new_arena_offset = given_arenas * ARENA_SIZE;
-    let arenas_needed = match (length) {
-      case l where l <= ARENA_SIZE => 1
-      case _ => 2;
-    }
-
-    let last_node = free_list.lastNode;
-    if (last_node.isNone()) {
-      free_list.addLast((new_arena_offset, ARENA_SIZE * arenas_needed));
+      free_heads[arena.size] = Some(arena);
     } else {
-      let last = last_node.getOrThrow();
-      let last_offset = last.value[0];
-      let last_size = last.value[1];
-      if (last_offset + last_size == new_arena_offset) {
-        last.value = (last_offset, last_size + ARENA_SIZE * arenas_needed);
+      arena.next_free = large_head;
+      if (let Some(h) <- large_head) {
+        h.prev_free = Some(arena);
+      }
+      large_head = Some(arena);
+    }
+  }
+
+  private func remove_from_free(arena: Arena): Unit {
+    let prev = arena.prev_free;
+    let next = arena.next_free;
+
+    if (let Some(p) <- prev) {
+      p.next_free = next;
+    } else {
+      if (arena.size <= 40) {
+        free_heads[arena.size] = next;
       } else {
-        free_list.addLast((new_arena_offset, ARENA_SIZE * arenas_needed));
+        large_head = next;
       }
     }
-    given_arenas += arenas_needed;
 
-    return arenas_needed;
+    if (let Some(n) <- next) {
+      n.prev_free = prev;
+    }
+
+    arena.prev_free = None;
+    arena.next_free = None;
   }
 
-  private mut func allocate_in_node(node: LinkedListNode<(Int, Int)>, length: Int): Int {
-    let allocated_offset = node.value[0];
-    let remaining_size = node.value[1] - length;
+  private func dig_trench(n: Int): Arena {
+    let additional_size = n * 20;
 
-    if (remaining_size > 0) {
-      node.value = (allocated_offset + length, remaining_size);
+    if (let Some(last) <- last_arena) {
+      if (last.is_free) {
+        remove_from_free(last);
+        last.size += additional_size;
+        add_to_free(last);
+        return last;
+      } else {
+        let new_arena = Arena(last.end + 1, additional_size, true);
+        last.right = Some(new_arena);
+        new_arena.left = Some(last);
+        last_arena = Some(new_arena);
+        add_to_free(new_arena);
+        return new_arena;
+      }
     } else {
-      free_list.remove(node);
+      let new_arena = Arena(0, additional_size, true);
+      first_arena = Some(new_arena);
+      last_arena = Some(new_arena);
+      add_to_free(new_arena);
+      return new_arena;
     }
-
-    allocated[allocated_offset] = length;
-    return allocated_offset;
   }
 
-  mut func free(offset: Int) {
-    if (!allocated.contains(offset)) {
-      return;
+  public func allocate(size: Int): (Arena, Int) {
+    var block: Option<Arena> = None;
+
+    var i = size;
+    while (i <= 40) {
+      if (let Some(b) <- free_heads[i]) {
+        block = Some(b);
+        break;
+      }
+      i += 1;
     }
 
-    let length = allocated[offset];
-    allocated.remove(offset);
-
-    var prev_node: Option<LinkedListNode<(Int, Int)>> = None;
-    var cur_node: Option<LinkedListNode<(Int, Int)>> = free_list.firstNode;
-    while (true) {
-      match (cur_node) {
-        case None => break;
-        case Some(cur) =>
-          if (cur.value[0] < offset) {
-            prev_node = cur_node;
-            cur_node = cur.next;
-          } else {
-            break;
-          }
+    if (block.isNone()) {
+      if (let Some(b) <- large_head) {
+        block = Some(b);
       }
     }
-    let canMergeLeft = match (prev_node) {
-      case Some(pn) => pn.value[0] + pn.value[1] == offset
-      case None => false
-    };
-    let canMergeRight = match (cur_node) {
-      case Some(cn) => cn.value[0] == offset + length
-      case None => false
-    };
 
-    match ((canMergeLeft, canMergeRight)) {
-      case (true, true) =>
-        let p = prev_node.getOrThrow();
-        let c = cur_node.getOrThrow();
-        p.value = (p.value[0], p.value[1] + length + c.value[1]);
-        free_list.remove(c);
+    var dug_trenches = 0;
 
-      case (true, false) =>
-        let p = prev_node.getOrThrow();
-        p.value = (p.value[0], p.value[1] + length);
+    if (block.isNone()) {
+      var tail_free_size = 0;
+      if (let Some(last) <- last_arena) {
+        if (last.is_free) {
+          tail_free_size = last.size;
+        }
+      }
+      let needed = size - tail_free_size;
+      dug_trenches = (needed + 19) / 20;
+      let new_free_block = dig_trench(dug_trenches);
+      block = Some(new_free_block);
+    }
 
-      case (false, true) =>
-        let c = cur_node.getOrThrow();
-        c.value = (offset, length + c.value[1]);
+    let unwrapped = block.getOrThrow();
+    remove_from_free(unwrapped);
 
-      case (false, false) =>
-        match (prev_node) {
-          case Some(p) => free_list.addAfter(p, (offset, length))
-          case None => free_list.addFirst((offset, length))
+    let remainder = unwrapped.size - size;
+    if (remainder > 0) {
+      unwrapped.size = size;
+      unwrapped.is_free = false;
+
+      let free_rem = Arena(unwrapped.offset + size, remainder, true);
+      free_rem.left = Some(unwrapped);
+      free_rem.right = unwrapped.right;
+
+      if (let Some(r) <- unwrapped.right) {
+        r.left = Some(free_rem);
+      } else {
+        last_arena = Some(free_rem);
+      }
+      unwrapped.right = Some(free_rem);
+
+      add_to_free(free_rem);
+    } else {
+      unwrapped.is_free = false;
+    }
+
+    return (unwrapped, dug_trenches);
+  }
+
+  public func free(arena: Arena): Unit {
+    var start = arena.offset;
+    var size = arena.size;
+    var left_neighbor = arena.left;
+    var right_neighbor = arena.right;
+
+    if (let Some(l) <- left_neighbor) {
+      if (l.is_free) {
+        remove_from_free(l);
+        start = l.offset;
+        size += l.size;
+        left_neighbor = l.left;
+      }
+    }
+    if (let Some(r) <- right_neighbor) {
+      if (r.is_free) {
+        remove_from_free(r);
+        size += r.size;
+        right_neighbor = r.right;
         }
     }
-  }
 
+    arena.offset = start;
+    arena.size = size;
+    arena.left = left_neighbor;
+    arena.right = right_neighbor;
+
+    if (let Some(l) <- left_neighbor) {
+      l.right = Some(arena);
+    } else {
+      first_arena = Some(arena);
+    }
+
+    if (let Some(r) <- right_neighbor) {
+      r.left = Some(arena);
+    } else {
+      last_arena = Some(arena);
+    }
+
+    add_to_free(arena);
+  }
 }
