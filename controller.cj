@@ -20,6 +20,4 @@ main() {
       case (_, _) => break;
     }
   }
-
-  println("Program finished");
 }
