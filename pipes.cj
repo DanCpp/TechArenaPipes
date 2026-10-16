@@ -3,9 +3,11 @@ import std.collection.HashMap;
 struct PipesCollection {
   var nextID: Int; // Next available Pipe ID
   let pipes: HashMap<Int, Int>; // Pipe ID -> Pipe offset in arena
+  var pipes_allocator: PipesAllocator; // Arena allocator for pipes
 
   public init() {
     pipes = HashMap<Int, Int>();
+    pipes_allocator = PipesAllocator();
     nextID = 1; // Start IDs from 1
   }
 
@@ -23,8 +25,9 @@ struct PipesCollection {
   mut func insert(pipeLength: Int): (Int, Int) {
     let pipeId = nextID;
     nextID += 1;
-    pipes[pipeId] = pipeLength; // will be offset in arena
-    // Will be allocation in arena
-    return (pipeId, pipeLength);
+    let (offset, N) = pipes_allocator.allocate(pipeLength); // Allocate space in arena
+    pipes[pipeId] = offset;
+    
+    return (offset, N);
   }
 }

@@ -16,7 +16,7 @@ main() {
 
     match (answer) {
       case ((pipeId, offset), Command.Extract) => println("${offset}")
-      case ((pipeId, length), Command.Insert) => println("${pipeId}");
+      case ((D, N), Command.Insert) => println("${N} ${D}");
       case (_, _) => break;
     }
   }
