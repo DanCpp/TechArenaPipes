@@ -1,0 +1,65 @@
+name: Cangjie Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Cangjie
+        uses: Zxilly/setup-cangjie@v3
+        with:
+          channel: sts
+          version: 1.1.0-beta.23
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ python3-psutil
+
+      - name: Build interactor
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -O2 -I testing -o build/interactor testing/interactor.cpp
+
+      - name: Compile Cangjie solution
+        run: |
+          cjc -o build/main src/alloc.cj src/controller.cj src/pipes.cj
+
+      - name: Run tests
+        run: |
+          cd testing
+          python3 runner.py -d tests \
+            --interactor ../build/interactor \
+            ../build/main | tee ../test_output.log
+
+      - name: Add test report to Job Summary
+        if: always()
+        run: |
+          echo "## Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test_output.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test_output.log
+            testing/answer.txt
+            testing/score.txt
+            testing/report.txt
+          retention-days: 7
