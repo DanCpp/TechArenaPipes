@@ -33,7 +33,7 @@ jobs:
 
       - name: Compile Cangjie solution
         run: |
-          cjc -o build/main src/alloc.cj src/controller.cj src/pipes.cj
+          cjc -o build/main src/alloc.cj src/controller.cj src/pipes.cj src/heap.cj
 
       - name: Run tests
         run: |
