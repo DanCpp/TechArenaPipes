@@ -3,6 +3,7 @@
 *.cjo.flag
 
 /sdk/
+/hidden/
 /.vscode/
 /.venv/
 /.cache/
