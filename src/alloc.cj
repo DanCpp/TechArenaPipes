@@ -25,21 +25,22 @@ public class Arena <: HeapNode {
     }
   }
 
-  public func getHeapIndex(): Int { 
-    _heap_index 
+  public func getHeapIndex(): Int {
+    _heap_index
   }
-  
-  public func setHeapIndex(idx: Int): Unit { 
-    _heap_index = idx 
+  public func setHeapIndex(idx: Int): Unit {
+    _heap_index = idx
   }
 }
 
 public class PipesAllocator {
   var free_heads: ArrayList<Option<Arena>>
-  var large_heap: Heap<Arena>         
+  var large_heap: Heap<Arena>
 
   var first_arena: Option<Arena> = None
   var last_arena: Option<Arena> = None
+  var free_streak: Int = 0
+  var preserve_small_blocks: Bool = false
 
   public init() {
     free_heads = ArrayList<Option<Arena>>(41)
@@ -51,37 +52,29 @@ public class PipesAllocator {
     large_heap = Heap<Arena>({ a: Arena, b: Arena => a.size < b.size })
   }
 
-  public func allocate(size: Int): (Arena, Int) {
-    var block: Option<Arena> = None
 
-    var i = size
-    while (i <= 40) {
-      if (let Some(b) <- free_heads[i]) {
-        block = Some(b)
-        break
-      }
-      i += 1
+  public func allocate(
+    size: Int,
+    preferRight: Bool,
+    allow_largest_small_block: Bool,
+    preferOldest: Bool
+  ): (Arena, Int) {
+    if (free_streak >= 100) {
+      preserve_small_blocks = true
     }
-
-    if (block.isNone()) {
-      if (let Some(b) <- large_heap.peek()) {   
-        block = Some(b)
-      }
-    }
-
+    let use_largest_small_block =
+      allow_largest_small_block &&
+      ((size > 1 && size <= 4 && free_streak >= 3) ||
+       (size == 1 && free_streak >= 4) ||
+       (preserve_small_blocks && (size == 1 || size == 4)))
+    free_streak = 0
+    var block = findFreeBlock(size, use_largest_small_block, preferOldest)
     var dug_trenches = 0
 
     if (block.isNone()) {
-      var tail_free_size = 0
-      if (let Some(last) <- last_arena) {
-        if (last.is_free) {
-          tail_free_size = last.size
-        }
-      }
-      let needed = size - tail_free_size
-      dug_trenches = (needed + 19) / 20
-      let new_free_block = dig_trench(dug_trenches)
-      block = Some(new_free_block)
+      let (newBlock, trenches) = allocateFromTail(size)
+      block = Some(newBlock)
+      dug_trenches = trenches
     }
 
     let unwrapped = block.getOrThrow()
@@ -89,26 +82,124 @@ public class PipesAllocator {
 
     let remainder = unwrapped.size - size
     if (remainder > 0) {
-      unwrapped.size = size
-      unwrapped.is_free = false
-
-      let free_rem = Arena(unwrapped.offset + size, remainder, true)
-      free_rem.left = Some(unwrapped)
-      free_rem.right = unwrapped.right
-
-      if (let Some(r) <- unwrapped.right) {
-        r.left = Some(free_rem)
+      if (preferRight ||
+          (preserve_small_blocks && size == 1) ||
+          (preferOldest && size <= 3)) {
+        splitBlockLeft(unwrapped, size, remainder)
       } else {
-        last_arena = Some(free_rem)
+        splitBlockRight(unwrapped, size, remainder)
       }
-      unwrapped.right = Some(free_rem)
-
-      add_to_free(free_rem)
     } else {
       unwrapped.is_free = false
     }
-
     return (unwrapped, dug_trenches)
+  }
+
+  private func findFreeBlock(
+    size: Int,
+    use_largest_small_block: Bool,
+    preferOldest: Bool
+  ): Option<Arena> {
+    if (use_largest_small_block) {
+      var i = 40
+      while (i >= size) {
+        if (let Some(b) <- free_heads[i]) {
+          if (preferOldest) {
+            return Some(oldestFree(b))
+          }
+          return Some(b)
+        }
+        i -= 1
+      }
+    } else {
+      var i = size
+      while (i <= 40) {
+        if (let Some(b) <- free_heads[i]) {
+          if (preferOldest) {
+            return Some(oldestFree(b))
+          }
+          return Some(b)
+        }
+        i += 1
+      }
+    }
+
+    var skipped_large = ArrayList<Arena>()
+    while (let Some(b) <- large_heap.peek()) {
+      if (b.size >= size) {
+        for (skipped in skipped_large) {
+          large_heap.push(skipped)
+        }
+        return Some(b)
+      }
+      let skipped = large_heap.pop().getOrThrow()
+      skipped_large.add(skipped)
+    }
+    for (skipped in skipped_large) {
+      large_heap.push(skipped)
+    }
+    return None
+  }
+
+  private func oldestFree(head: Arena): Arena {
+    var current = head
+    while (let Some(next) <- current.next_free) {
+      current = next
+    }
+    return current
+  }
+
+  private func allocateFromTail(size: Int): (Arena, Int) {
+    var tail_free_size = 0
+    if (let Some(last) <- last_arena) {
+      if (last.is_free) {
+        tail_free_size = last.size
+      }
+    }
+    
+    let needed = size - tail_free_size
+    let dug_trenches = (needed + 19) / 20
+    let new_free_block = dig_trench(dug_trenches)
+    
+    return (new_free_block, dug_trenches)
+  }
+
+  private func splitBlockLeft(block: Arena, size: Int, remainder: Int) {
+    let old_left = block.left
+    let free_rem = Arena(block.offset, remainder, true)
+    
+    free_rem.left = old_left
+    free_rem.right = Some(block)
+    
+    block.left = Some(free_rem)
+    block.offset += remainder
+    block.size = size
+    block.is_free = false
+
+    if (let Some(l) <- old_left) {
+      l.right = Some(free_rem)
+    } else {
+      first_arena = Some(free_rem)
+    }
+    add_to_free(free_rem)
+  }
+
+  private func splitBlockRight(block: Arena, size: Int, remainder: Int) {
+    block.size = size
+    block.is_free = false
+
+    let free_rem = Arena(block.offset + size, remainder, true)
+    free_rem.left = Some(block)
+    free_rem.right = block.right
+
+    if (let Some(r) <- block.right) {
+      r.left = Some(free_rem)
+    } else {
+      last_arena = Some(free_rem)
+    }
+    block.right = Some(free_rem)
+    
+    add_to_free(free_rem)
   }
 
 
@@ -144,7 +235,7 @@ public class PipesAllocator {
       arena.next_free = None
 
     } else {
-      large_heap.remove(arena)             
+      large_heap.remove(arena)
       arena.prev_free = None
       arena.next_free = None
     }
@@ -159,6 +250,7 @@ public class PipesAllocator {
         last.size += additional_size
         add_to_free(last)
         return last
+
       } else {
         let new_arena = Arena(last.end + 1, additional_size, true)
         last.right = Some(new_arena)
@@ -176,8 +268,8 @@ public class PipesAllocator {
     }
   }
 
-
   public func free(arena: Arena): Unit {
+    free_streak += 1
     var start = arena.offset
     var size = arena.size
     var left_neighbor = arena.left
@@ -196,7 +288,7 @@ public class PipesAllocator {
         remove_from_free(r)
         size += r.size
         right_neighbor = r.right
-        }
+      }
     }
 
     arena.offset = start
@@ -218,4 +310,4 @@ public class PipesAllocator {
 
     add_to_free(arena)
   }
-} 
+}
