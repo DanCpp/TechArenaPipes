@@ -39,7 +39,8 @@ public class PipesAllocator {
 
   var first_arena: Option<Arena> = None
   var last_arena: Option<Arena> = None
-  var has_recent_free: Bool = false
+  var free_streak: Int = 0
+  var preserve_small_blocks: Bool = false
 
   public init() {
     free_heads = ArrayList<Option<Arena>>(41)
@@ -57,9 +58,15 @@ public class PipesAllocator {
     preferRight: Bool,
     allow_largest_small_block: Bool
   ): (Arena, Int) {
+    if (free_streak >= 100) {
+      preserve_small_blocks = true
+    }
     let use_largest_small_block =
-      allow_largest_small_block && has_recent_free && size <= 4
-    has_recent_free = false
+      allow_largest_small_block &&
+      ((size > 1 && size <= 4 && free_streak >= 3) ||
+       (size == 1 && free_streak >= 4) ||
+       (preserve_small_blocks && (size == 1 || size == 4)))
+    free_streak = 0
     var block = findFreeBlock(size, use_largest_small_block)
     var dug_trenches = 0
 
@@ -74,7 +81,7 @@ public class PipesAllocator {
 
     let remainder = unwrapped.size - size
     if (remainder > 0) {
-      if (preferRight) {
+      if (preferRight || (preserve_small_blocks && size == 1)) {
         splitBlockLeft(unwrapped, size, remainder)
       } else {
         splitBlockRight(unwrapped, size, remainder)
@@ -244,7 +251,7 @@ public class PipesAllocator {
   }
 
   public func free(arena: Arena): Unit {
-    has_recent_free = true
+    free_streak += 1
     var start = arena.offset
     var size = arena.size
     var left_neighbor = arena.left
