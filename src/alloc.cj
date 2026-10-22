@@ -56,7 +56,8 @@ public class PipesAllocator {
   public func allocate(
     size: Int,
     preferRight: Bool,
-    allow_largest_small_block: Bool
+    allow_largest_small_block: Bool,
+    preferOldest: Bool
   ): (Arena, Int) {
     if (free_streak >= 100) {
       preserve_small_blocks = true
@@ -67,7 +68,7 @@ public class PipesAllocator {
        (size == 1 && free_streak >= 4) ||
        (preserve_small_blocks && (size == 1 || size == 4)))
     free_streak = 0
-    var block = findFreeBlock(size, use_largest_small_block)
+    var block = findFreeBlock(size, use_largest_small_block, preferOldest)
     var dug_trenches = 0
 
     if (block.isNone()) {
@@ -81,7 +82,9 @@ public class PipesAllocator {
 
     let remainder = unwrapped.size - size
     if (remainder > 0) {
-      if (preferRight || (preserve_small_blocks && size == 1)) {
+      if (preferRight ||
+          (preserve_small_blocks && size == 1) ||
+          (preferOldest && size <= 3)) {
         splitBlockLeft(unwrapped, size, remainder)
       } else {
         splitBlockRight(unwrapped, size, remainder)
@@ -94,12 +97,16 @@ public class PipesAllocator {
 
   private func findFreeBlock(
     size: Int,
-    use_largest_small_block: Bool
+    use_largest_small_block: Bool,
+    preferOldest: Bool
   ): Option<Arena> {
     if (use_largest_small_block) {
       var i = 40
       while (i >= size) {
         if (let Some(b) <- free_heads[i]) {
+          if (preferOldest) {
+            return Some(oldestFree(b))
+          }
           return Some(b)
         }
         i -= 1
@@ -108,6 +115,9 @@ public class PipesAllocator {
       var i = size
       while (i <= 40) {
         if (let Some(b) <- free_heads[i]) {
+          if (preferOldest) {
+            return Some(oldestFree(b))
+          }
           return Some(b)
         }
         i += 1
@@ -129,6 +139,14 @@ public class PipesAllocator {
       large_heap.push(skipped)
     }
     return None
+  }
+
+  private func oldestFree(head: Arena): Arena {
+    var current = head
+    while (let Some(next) <- current.next_free) {
+      current = next
+    }
+    return current
   }
 
   private func allocateFromTail(size: Int): (Arena, Int) {

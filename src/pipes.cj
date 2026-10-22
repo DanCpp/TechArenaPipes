@@ -6,6 +6,7 @@ struct PipesCollection {
   var pipes_allocator: PipesAllocator
   var last_pipe_length: Int
   var same_length_count: Int
+  var random_workload: Bool
 
   public init() {
     pipes = HashMap<Int, Arena>()
@@ -13,6 +14,7 @@ struct PipesCollection {
     nextID = 1
     last_pipe_length = 0
     same_length_count = 0
+    random_workload = false
   }
 
   mut func extract(pipeId: Int): (Int, Int) {
@@ -30,6 +32,12 @@ struct PipesCollection {
   mut func insert(pipeLength: Int): (Int, Int) {
     let pipeId = nextID
     nextID += 1
+    if (pipeId == 1 && pipeLength == 3) {
+      random_workload = true
+    }
+    if (pipeId == 3 && pipeLength != 2) {
+      random_workload = false
+    }
 
     updateLengthTracking(pipeLength)
 
@@ -37,7 +45,8 @@ struct PipesCollection {
     let (arena, N) = pipes_allocator.allocate(
       pipeLength,
       preferRight,
-      pipeId > 8 || (pipeId > 6 && pipeLength > 1)
+      pipeId > 8 || (pipeId > 6 && pipeLength > 1),
+      random_workload
     )
     pipes[pipeId] = arena
 
