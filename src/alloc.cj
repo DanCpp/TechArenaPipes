@@ -35,6 +35,7 @@ public class Arena <: HeapNode {
 
 public class PipesAllocator {
   var free_heads: ArrayList<Option<Arena>>
+  var free_tails: ArrayList<Option<Arena>>
   var large_heap: Heap<Arena>
 
   var first_arena: Option<Arena> = None
@@ -44,9 +45,11 @@ public class PipesAllocator {
 
   public init() {
     free_heads = ArrayList<Option<Arena>>(41)
+    free_tails = ArrayList<Option<Arena>>(41)
     var i = 0
     while (i < 41) {
       free_heads.add(None)
+      free_tails.add(None)
       i += 1
     }
     large_heap = Heap<Arena>({ a: Arena, b: Arena => a.size < b.size })
@@ -105,7 +108,7 @@ public class PipesAllocator {
       while (i >= size) {
         if (let Some(b) <- free_heads[i]) {
           if (preferOldest) {
-            return Some(oldestFree(b))
+            return free_tails[i]
           }
           return Some(b)
         }
@@ -116,7 +119,7 @@ public class PipesAllocator {
       while (i <= 40) {
         if (let Some(b) <- free_heads[i]) {
           if (preferOldest) {
-            return Some(oldestFree(b))
+            return free_tails[i]
           }
           return Some(b)
         }
@@ -139,14 +142,6 @@ public class PipesAllocator {
       large_heap.push(skipped)
     }
     return None
-  }
-
-  private func oldestFree(head: Arena): Arena {
-    var current = head
-    while (let Some(next) <- current.next_free) {
-      current = next
-    }
-    return current
   }
 
   private func allocateFromTail(size: Int): (Arena, Int) {
@@ -212,6 +207,8 @@ public class PipesAllocator {
       arena.next_free = head
       if (let Some(h) <- head) {
         h.prev_free = Some(arena)
+      } else {
+        free_tails[arena.size] = Some(arena)
       }
       free_heads[arena.size] = Some(arena)
     } else {
@@ -230,6 +227,8 @@ public class PipesAllocator {
       }
       if (let Some(n) <- next) {
         n.prev_free = prev
+      } else {
+        free_tails[arena.size] = prev
       }
       arena.prev_free = None
       arena.next_free = None
