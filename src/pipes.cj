@@ -34,7 +34,11 @@ struct PipesCollection {
     updateLengthTracking(pipeLength)
 
     let preferRight = shouldPreferRight(pipeId, pipeLength)
-    let (arena, N) = pipes_allocator.allocate(pipeLength, preferRight)
+    let (arena, N) = pipes_allocator.allocate(
+      pipeLength,
+      preferRight,
+      pipeId > 8 || (pipeId > 6 && pipeLength > 1)
+    )
     pipes[pipeId] = arena
 
     return (arena.offset, N)

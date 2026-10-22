@@ -28,7 +28,6 @@ public class Arena <: HeapNode {
   public func getHeapIndex(): Int {
     _heap_index
   }
-
   public func setHeapIndex(idx: Int): Unit {
     _heap_index = idx
   }
@@ -40,6 +39,7 @@ public class PipesAllocator {
 
   var first_arena: Option<Arena> = None
   var last_arena: Option<Arena> = None
+  var has_recent_free: Bool = false
 
   public init() {
     free_heads = ArrayList<Option<Arena>>(41)
@@ -52,8 +52,15 @@ public class PipesAllocator {
   }
 
 
-  public func allocate(size: Int, preferRight: Bool): (Arena, Int) {
-    var block = findFreeBlock(size)
+  public func allocate(
+    size: Int,
+    preferRight: Bool,
+    allow_largest_small_block: Bool
+  ): (Arena, Int) {
+    let use_largest_small_block =
+      allow_largest_small_block && has_recent_free && size <= 4
+    has_recent_free = false
+    var block = findFreeBlock(size, use_largest_small_block)
     var dug_trenches = 0
 
     if (block.isNone()) {
@@ -78,16 +85,41 @@ public class PipesAllocator {
     return (unwrapped, dug_trenches)
   }
 
-  private func findFreeBlock(size: Int): Option<Arena> {
-    var i = size
-    while (i <= 40) {
-      if (let Some(b) <- free_heads[i]) {
+  private func findFreeBlock(
+    size: Int,
+    use_largest_small_block: Bool
+  ): Option<Arena> {
+    if (use_largest_small_block) {
+      var i = 40
+      while (i >= size) {
+        if (let Some(b) <- free_heads[i]) {
+          return Some(b)
+        }
+        i -= 1
+      }
+    } else {
+      var i = size
+      while (i <= 40) {
+        if (let Some(b) <- free_heads[i]) {
+          return Some(b)
+        }
+        i += 1
+      }
+    }
+
+    var skipped_large = ArrayList<Arena>()
+    while (let Some(b) <- large_heap.peek()) {
+      if (b.size >= size) {
+        for (skipped in skipped_large) {
+          large_heap.push(skipped)
+        }
         return Some(b)
       }
-      i += 1
+      let skipped = large_heap.pop().getOrThrow()
+      skipped_large.add(skipped)
     }
-    if (let Some(b) <- large_heap.peek()) {
-      return Some(b)
+    for (skipped in skipped_large) {
+      large_heap.push(skipped)
     }
     return None
   }
@@ -212,6 +244,7 @@ public class PipesAllocator {
   }
 
   public func free(arena: Arena): Unit {
+    has_recent_free = true
     var start = arena.offset
     var size = arena.size
     var left_neighbor = arena.left
