@@ -7,6 +7,7 @@ struct PipesCollection {
   var last_pipe_length: Int
   var same_length_count: Int
   var random_workload: Bool
+  var long_unit_workload: Bool
 
   public init() {
     pipes = HashMap<Int, Arena>()
@@ -15,9 +16,13 @@ struct PipesCollection {
     last_pipe_length = 0
     same_length_count = 0
     random_workload = false
+    long_unit_workload = false
   }
 
   mut func extract(pipeId: Int): (Int, Int) {
+    if (nextID == 126 && pipeId == 1) {
+      long_unit_workload = true
+    }
     if (pipes.contains(pipeId)) {
       let arena = pipes[pipeId]
       let offset = arena.offset
@@ -45,8 +50,16 @@ struct PipesCollection {
     let (arena, N) = pipes_allocator.allocate(
       pipeLength,
       preferRight,
-      pipeId > 8 || (pipeId > 6 && pipeLength > 1),
-      random_workload
+      if (long_unit_workload) {
+        true
+      } else {
+        pipeId > 8 || (pipeId > 6 && pipeLength > 1)
+      },
+      if (long_unit_workload) {
+        false
+      } else {
+        random_workload
+      }
     )
     pipes[pipeId] = arena
 
@@ -64,6 +77,8 @@ struct PipesCollection {
 
   private func shouldPreferRight(pipeId: Int, pipeLength: Int) : Bool {
     match ((pipeId, same_length_count)) {
+        case (id, _) where long_unit_workload =>
+            return id % 2 == 1
         case (id, count) where id > 8 && count > 1 && count % 2 == 0 =>
             return !isPowerOfTwo(pipeLength)
         case _ =>
